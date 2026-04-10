@@ -3,9 +3,16 @@ set -e
 # TARGET_SOC="rk3588"
 GCC_COMPILER=aarch64-linux-gnu
 
-export LD_LIBRARY_PATH=${TOOL_CHAIN}/lib64:$LD_LIBRARY_PATH
-export CC=${GCC_COMPILER}-gcc
-export CXX=${GCC_COMPILER}-g++
+if [ "$(uname -m)" = "aarch64" ]; then
+  export CC=${CC:-gcc}
+  export CXX=${CXX:-g++}
+  echo "Native aarch64 build detected, using ${CC}/${CXX}"
+else
+  export LD_LIBRARY_PATH=${TOOL_CHAIN}/lib64:$LD_LIBRARY_PATH
+  export CC=${CC:-${GCC_COMPILER}-gcc}
+  export CXX=${CXX:-${GCC_COMPILER}-g++}
+  echo "Cross build detected, using ${CC}/${CXX}"
+fi
 
 ROOT_PWD=$( cd "$( dirname $0 )" && cd -P "$( dirname "$SOURCE" )" && pwd )
 
