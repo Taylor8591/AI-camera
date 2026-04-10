@@ -7,7 +7,8 @@
 #include <mutex>
 #include <iostream>
 #include <atomic>
-
+#include <sys/time.h>
+#include <cstdint>
 
 std::atomic<bool> allThreadRunning(false);
 std::atomic<bool> ReadThreadRunning(false);
@@ -54,13 +55,13 @@ int JCAVCodecHandler::InitVideoStream() {
         return -1;
     }
     // qDebug() << "****************************************";
-    // print detailed information
+    // // print detailed information
     // av_dump_format(m_pFormatCtx, 0, filePath ,0);
     // qDebug() << "****************************************";
     m_videoStreamIdx = -1;
     m_audioStreamIdx = -1;
 
-    qDebug() << "nb_streams: " << m_pFormatCtx->nb_streams;
+    qDebug() << "stream numbers: " << m_pFormatCtx->nb_streams;
     for(int i=0; i<(int)m_pFormatCtx->nb_streams; i++) {
 
         AVCodecParameters* codecParameters = m_pFormatCtx->streams[i]->codecpar;
@@ -96,28 +97,52 @@ int JCAVCodecHandler::InitVideoStream() {
             
     }
     
-    m_sampleRate = m_pAudioCodecCtx->sample_rate;
-    m_channel = m_pAudioCodecCtx->channels;
-    switch(m_pAudioCodecCtx->sample_fmt) {
-        case AV_SAMPLE_FMT_U8:
-            m_sampleSize = 8;
-            break;
-        case AV_SAMPLE_FMT_S16:
-            m_sampleSize = 16;
-            break;
-        case AV_SAMPLE_FMT_S32:
-            m_sampleSize = 32;
-            break;
-        default:
-            m_sampleSize = 16;
-            break;
+    if(m_videoStreamIdx == -1) {
+        qDebug() << "can't find video stream...";
+        return -1;
+    } else {
+        AVStream* videoStream = m_pFormatCtx->streams[m_videoStreamIdx];
+        qDebug() << "video width: " << m_videoWidth << ", video height: " << m_videoHeight;
+        m_videoRational = videoStream->time_base;
+        qDebug() << "AVStream Video Rational: " << m_videoRational.num << "/" << m_videoRational.den;
     }
-    qDebug() << "audio sample rate: " << m_sampleRate << ", audio channel: " << m_channel;
-    qDebug() << "audio sample size: " << m_sampleSize;
 
-    JCAudioPlayer::GetInstance()->SetSampleRate(m_sampleRate);
-    JCAudioPlayer::GetInstance()->SetSampleSize(m_sampleSize);
-    JCAudioPlayer::GetInstance()->Setchannel(m_channel);
+    if(m_audioStreamIdx == -1) {
+        qDebug() << "can't find audio stream...";
+        qDebug() << "use system time to sync video...";
+
+    } else {
+        AVStream* audioStream = m_pFormatCtx->streams[m_audioStreamIdx];
+        m_audioRational = audioStream->time_base;
+        // 1 / 48000
+        qDebug() << "AVStream Audio Rational: " << m_audioRational.num << "/" << m_audioRational.den;
+        qDebug() << "audio time base: " << av_q2d(m_audioRational);
+
+        m_sampleRate = m_pAudioCodecCtx->sample_rate;
+        m_channel = m_pAudioCodecCtx->channels;
+        switch(m_pAudioCodecCtx->sample_fmt) {
+            case AV_SAMPLE_FMT_U8:
+                m_sampleSize = 8;
+                break;
+            case AV_SAMPLE_FMT_S16:
+                m_sampleSize = 16;
+                break;
+            case AV_SAMPLE_FMT_S32:
+                m_sampleSize = 32;
+                break;
+            default:
+                m_sampleSize = 16;
+                break;
+        }
+        qDebug() << "audio sample rate: " << m_sampleRate << ", audio channel: " << m_channel;
+        qDebug() << "audio sample size: " << m_sampleSize;
+
+        JCAudioPlayer::GetInstance()->SetSampleRate(m_sampleRate);
+        JCAudioPlayer::GetInstance()->SetSampleSize(m_sampleSize);
+        JCAudioPlayer::GetInstance()->Setchannel(m_channel);
+    }
+
+    
     
     if(m_pYUVFrame == NULL) {
         m_pYUVFrame = av_frame_alloc();
@@ -153,24 +178,7 @@ int JCAVCodecHandler::InitVideoStream() {
     m_videoWidth = m_pVideoCodecCtx->width;
     m_videoHeight = m_pVideoCodecCtx->height;
 
-    if(m_videoStreamIdx == -1) {
-        qDebug() << "can't find video stream...";
-    } else {
-        AVStream* videoStream = m_pFormatCtx->streams[m_videoStreamIdx];
-        qDebug() << "video width: " << m_videoWidth << ", video height: " << m_videoHeight;
-        m_videoRational = videoStream->time_base;
-        qDebug() << "AVStream Video Rational: " << m_videoRational.num << "/" << m_videoRational.den;
-    }
-
-    if(m_audioStreamIdx == -1) {
-        qDebug() << "can't find audio stream...";
-    } else {
-        AVStream* audioStream = m_pFormatCtx->streams[m_audioStreamIdx];
-        m_audioRational = audioStream->time_base;
-        // 1 / 48000
-        qDebug() << "AVStream Audio Rational: " << m_audioRational.num << "/" << m_audioRational.den;
-        qDebug() << "audio time base: " << av_q2d(m_audioRational);
-    }
+    
     
     return 0;
 }
@@ -226,8 +234,11 @@ void JCAVCodecHandler::StartMediaProcessThread() {
     allThreadRunning = true;
 
     m_readThread  = std::thread(&JCAVCodecHandler::doReadMediaFrameThread, this);
+
+    if(m_audioStreamIdx != -1) {
+        m_audioThread = std::thread(&JCAVCodecHandler::doAudioDecodeThread, this);
+    }
     m_videoThread = std::thread(&JCAVCodecHandler::doVideoDecodeThread, this);
-    m_audioThread = std::thread(&JCAVCodecHandler::doAudioDecodeThread, this);
 
     // PlayStatus = MEDIAPLAY_STATUS_PLAYING;
 }
@@ -368,6 +379,9 @@ void JCAVCodecHandler::doVideoDecodeThread() {
         m_pVideoFrame = av_frame_alloc();
     }
 
+    startSystemTime = getCurrentTimeUs();
+    qDebug() << "video decode thread start... startSystemTime: " << startSystemTime;
+
     while(allThreadRunning) {
 
         VideoThreadRunning = true;
@@ -398,12 +412,23 @@ void JCAVCodecHandler::doVideoDecodeThread() {
         // m_pVideoFrame 中存储的是解码后的原始帧数据（如 H.264），需要转换为 YUV420P 格式才能渲染
         int decodeRet = avcodec_receive_frame(m_pVideoCodecCtx, m_pVideoFrame);
         if(decodeRet == 0) {
-            int delay = syncVideoByAudioClock(m_pVideoFrame->pts);
-            if(delay > 0) {
-                stdThreadSleep(delay);
-            }
-            if(delay >= 0) {
-                convertAndRenderVideo(m_pVideoFrame, m_pVideoFrame->pts);
+            if(m_audioStreamIdx == -1) {
+                int delay = syncVideoBySystemClock(m_pVideoFrame->pts);
+                // qDebug() <<"delay: " << delay;
+                if(delay > 0) {
+                    stdThreadSleep(delay);
+                }
+                if(delay >= 0) {
+                    convertAndRenderVideo(m_pVideoFrame, m_pVideoFrame->pts);
+                }
+            } else {
+                int delay = syncVideoByAudioClock(m_pVideoFrame->pts);
+                if(delay > 0) {
+                    stdThreadSleep(delay);
+                }
+                if(delay >= 0) {
+                    convertAndRenderVideo(m_pVideoFrame, m_pVideoFrame->pts);
+                }
             }
         }
 
@@ -669,6 +694,7 @@ void JCAVCodecHandler::updateAudioClock(int64_t pts) {
 
 // 视频帧显示前调用
 int JCAVCodecHandler::syncVideoByAudioClock(int64_t videoPts) {
+
     float videoTime = getVideoTimeStampFromPTS(videoPts);
     float diff = videoTime - m_nCurrAudioTimeStamp; // 单位：秒
 
@@ -687,7 +713,34 @@ int JCAVCodecHandler::syncVideoByAudioClock(int64_t videoPts) {
     }
 }
 
+int64_t JCAVCodecHandler::getCurrentTimeUs()
+{
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    return (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+}
 
+int JCAVCodecHandler::syncVideoBySystemClock(int64_t videoPts) {
+
+    float videoTime = getVideoTimeStampFromPTS(videoPts);
+    int64_t presentationTimeUs = getCurrentTimeUs() - startSystemTime;
+    float presentationTime = presentationTimeUs / 1000000.0f;
+    float diff = videoTime - presentationTime; // 单位：秒
+    int delayMs = diff * 1000;
+
+    // 同步阈值：±50ms
+    if (delayMs > 50) {
+        // 视频太快，等待
+        return delayMs;
+    } else if (delayMs < -50) {
+        // 视频太慢，丢帧
+        return -1;
+    } else {
+        // 正常播放
+        return 0;
+    }
+
+}
 
 
 

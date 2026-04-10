@@ -74,8 +74,10 @@ private:
     // 音视频同步
     float getAudioTimeStampFromPTS(qint64 pts);
     float getVideoTimeStampFromPTS(qint64 pts);
+    int64_t getCurrentTimeUs();
     void updateAudioClock(int64_t pts);
     int syncVideoByAudioClock(int64_t videoPts);
+    int syncVideoBySystemClock(int64_t videoPts);
 
 private:
     // 路径与尺寸
@@ -121,6 +123,7 @@ private:
 
     // 音视频同步时钟
     float                m_nCurrAudioTimeStamp = 0.0f;
+    int64_t              startSystemTime = 0;
 
     // 线程
     std::thread          m_readThread;
