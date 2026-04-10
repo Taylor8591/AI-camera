@@ -1,0 +1,79 @@
+void JCAVCodecHandler::convertAndRenderVideo(AVFrame* decodeFrame, long long videoPts) {
+
+    if(decodeFrame == NULL) {
+        return;
+    }
+
+    if(m_pVideoSwsCtx == NULL) {
+        m_pVideoSwsCtx = sws_getContext(m_pVideoCodecCtx->width, m_pVideoCodecCtx->height, 
+            m_pVideoCodecCtx->pix_fmt, m_pVideoCodecCtx->width, m_pVideoCodecCtx->height, 
+            AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+    }
+
+    sws_scale(m_pVideoSwsCtx, decodeFrame->data, decodeFrame->linesize, 0, m_pVideoCodecCtx->height, m_pYUVFrame->data, m_pYUVFrame->linesize);
+
+    // 正确计算 YUV420P 的缓冲区大小
+    unsigned int width = m_pVideoCodecCtx->width;               // 1280
+    unsigned int height = m_pVideoCodecCtx->height;             // 720
+    unsigned int lumaLength = width * height;                   // 1280x720
+    unsigned int chromBLength = (width / 2) * (height / 2);     // 1280/2 x 720/2
+    unsigned int chromRLength = (width / 2) * (height / 2);     // 1280/2 x 720/2
+
+
+    H264YUV_Frame* updateYUVFrame = new H264YUV_Frame();
+
+    updateYUVFrame->width = width;
+    updateYUVFrame->height = height;
+    updateYUVFrame->pts = videoPts;
+
+    updateYUVFrame->luma.length = lumaLength;
+    updateYUVFrame->chromB.length = chromBLength;
+    updateYUVFrame->chromR.length = chromRLength;
+
+    updateYUVFrame->luma.dataBuffer = (unsigned char*)malloc(lumaLength);
+    updateYUVFrame->chromB.dataBuffer = (unsigned char*)malloc(chromBLength);
+    updateYUVFrame->chromR.dataBuffer = (unsigned char*)malloc(chromRLength);
+
+/****************************************************** */
+    // 复制时使用实际图像宽度，不是 linesize（linesize 可能包含对齐填充）
+    copyDecodeFrame420(m_pYUVFrame->data[0], updateYUVFrame->luma.dataBuffer, m_pYUVFrame->linesize[0], width, height);
+    copyDecodeFrame420(m_pYUVFrame->data[1], updateYUVFrame->chromB.dataBuffer, m_pYUVFrame->linesize[1], width / 2, height / 2);
+    copyDecodeFrame420(m_pYUVFrame->data[2], updateYUVFrame->chromR.dataBuffer, m_pYUVFrame->linesize[2], width / 2, height / 2);
+
+    if(m_updateVideoCallback) {
+        // 将内存管理责任转移给回调接收方（GUI线程）
+        // 接收方负责释放此内存
+        m_updateVideoCallback(updateYUVFrame, m_userdataVideo);
+    } else {
+        // 如果没有回调，立即释放内存
+        if(updateYUVFrame->luma.dataBuffer) {
+            free(updateYUVFrame->luma.dataBuffer);
+            updateYUVFrame->luma.dataBuffer = NULL;
+        }
+        if(updateYUVFrame->chromB.dataBuffer) {
+            free(updateYUVFrame->chromB.dataBuffer);
+            updateYUVFrame->chromB.dataBuffer = NULL;
+        }
+        if(updateYUVFrame->chromR.dataBuffer) {
+            free(updateYUVFrame->chromR.dataBuffer);
+            updateYUVFrame->chromR.dataBuffer = NULL;
+        }
+        if(updateYUVFrame) {
+            delete updateYUVFrame;
+            updateYUVFrame = NULL;
+        }
+    }
+
+}
+
+void JCAVCodecHandler::copyDecodeFrame420(uint8_t* src, uint8_t* dst, int linesize, int width, int height) {
+
+    // 注意：linesize 可能大于 width（由于对齐填充）
+    // 我们只复制实际的数据宽度，源指针按 linesize 跳过
+    qDebug() << "copyDecodeFrame420, width: " << width << ", height: " << height << ", linesize: " << linesize;
+    for(int i=0; i<height; i++) {
+        memcpy(dst, src, width);         // 只复制实际的数据宽度
+        src += linesize;                 // 源指针按 linesize 跳过（可能包含填充）
+        dst += width;                    // 目标指针紧跟数据宽度
+    }
+}

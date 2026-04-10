@@ -1,0 +1,14 @@
+prefix=/home/ty/Downloads/ffmpeg-3.2.12/output
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: libavformat
+Description: FFmpeg container format library
+Version: 57.56.101
+Requires: libavcodec >= 57.64.101, libswresample >= 2.3.100, libavutil >= 55.34.101
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavformat -ldl -lxcb -lX11 -L/usr/local/lib -lx264 -lpthread -lm -ldl -L/usr/local/lib -lfdk-aac -lm -pthread
+Libs.private: 
+Cflags: -I${includedir}
