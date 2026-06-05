@@ -512,7 +512,7 @@ int main(int argc, char **argv)
     gettimeofday(&time, nullptr);
     auto endTime = time.tv_sec * 1000 + time.tv_usec / 1000;
 
-    printf("\n✅ Recording Complete!\n");
+    printf("\nRecording Complete!\n");
     printf("Total frames: %d\n", frames);
     printf("Average FPS: %.2f\n", float(frames) / float(endTime - startTime) * 1000.0);
     printf("Output file: %s\n\n", output_file);
