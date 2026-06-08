@@ -3,20 +3,15 @@ CXX ?= g++
 
 .DEFAULT_GOAL := all
 
-TARGET := live555_h265_ring_unicast_server
-TARGET_SRC := live555_h265_ring_unicast_server.cpp
-TARGET_OBJ := $(TARGET_SRC:.cpp=.o)
-
-CAMERA_TARGET := camera_recorder_live_fifo
-CAMERA_SRC := camera_recorder_live_fifo.c
-CAMERA_OBJ := $(CAMERA_SRC:.c=.o)
-
 LAUNCHER_TARGET := camera_live555_launcher
 LAUNCHER_SRC := camera_live555_launcher.cpp
 LAUNCHER_OBJ := $(LAUNCHER_SRC:.cpp=.o)
-LAUNCHER_CAMERA_OBJ := v4l2_preview_sdl_entry.o
-LAUNCHER_SERVER_OBJ := live555_h265_ring_unicast_server_entry.o
+LAUNCHER_CAMERA_OBJ := v4l2_preview_sdl.o
+LAUNCHER_SERVER_OBJ := live555_h265_ring_unicast_server.o
+LAUNCHER_MP4_OBJ := fifo_h265_to_mp4.o
 CAMERA_PREVIEW_SRC := v4l2_preview_sdl.c
+MP4_MUXER_SRC := fifo_h265_to_mp4.c
+SERVER_SRC := live555_h265_ring_unicast_server.cpp
 
 SDL_CFLAGS := $(shell sdl2-config --cflags)
 SDL_LIBS := $(shell sdl2-config --libs)
@@ -31,11 +26,11 @@ CPPFLAGS := \
 	-I$(LIVE555_INCLUDE_DIR)/liveMedia \
 	-I$(LIVE555_INCLUDE_DIR)/BasicUsageEnvironment \
 	-I$(LIVE555_INCLUDE_DIR)/UsageEnvironment \
-	-I$(LIVE555_INCLUDE_DIR)/groupsock \
-	-MMD -MP
+	-I$(LIVE555_INCLUDE_DIR)/groupsock
 
 CFLAGS ?= -O2 -g -Wall
-CXXFLAGS ?= -O2 -g -Wall -std=c++20
+CXXSTD ?= -std=c++2a
+CXXFLAGS ?= -O2 -g -Wall $(CXXSTD)
 
 LIVE555_LIBS := \
 	$(LIVE555_LIB_DIR)/libliveMedia.a \
@@ -44,47 +39,36 @@ LIVE555_LIBS := \
 	$(LIVE555_LIB_DIR)/libUsageEnvironment.a \
 	-lssl -lcrypto -lpthread
 
-CAMERA_LIBS := \
-	/usr/lib/libavdevice.so.60 \
-	/usr/lib/libavformat.so.60 \
-	/usr/lib/libavcodec.so.60 \
-	/usr/lib/libavutil.so.58 \
-	/usr/lib/libswscale.so.7 \
-	/usr/lib/libswresample.so.4 \
-	-lasound -ldrm -lv4l2 -lxcb -lxcb-shm -lm -lpthread
-
 LAUNCHER_LIBS := \
 	$(LIVE555_LIBS) \
 	-L$(ROCKCHIP_LIB_DIR) \
 	-lrockchip_mpp \
-	-lv4l2
+	-lv4l2 \
+	-lavformat \
+	-lavcodec \
+	-lavutil
 
-ALL_TARGETS := $(TARGET) $(CAMERA_TARGET) $(LAUNCHER_TARGET)
-ALL_OBJS := $(TARGET_OBJ) $(CAMERA_OBJ) $(LAUNCHER_OBJ) $(LAUNCHER_CAMERA_OBJ) $(LAUNCHER_SERVER_OBJ)
+ALL_TARGETS := $(LAUNCHER_TARGET)
+ALL_OBJS := $(LAUNCHER_OBJ) $(LAUNCHER_CAMERA_OBJ) $(LAUNCHER_SERVER_OBJ) $(LAUNCHER_MP4_OBJ)
 DEP_FILES := $(ALL_OBJS:.o=.d)
 
 all: $(ALL_TARGETS)
 
-$(TARGET): $(TARGET_OBJ)
-	$(CXX) $(LDFLAGS) -o $@ $^ $(LIVE555_LIBS)
-
-$(CAMERA_TARGET): $(CAMERA_OBJ)
-	$(CC) $(LDFLAGS) -o $@ $^ $(CAMERA_LIBS) $(SDL_LIBS)
-
-$(LAUNCHER_TARGET): $(LAUNCHER_OBJ) $(LAUNCHER_CAMERA_OBJ) $(LAUNCHER_SERVER_OBJ)
+$(LAUNCHER_TARGET): $(LAUNCHER_OBJ) $(LAUNCHER_CAMERA_OBJ) $(LAUNCHER_SERVER_OBJ) $(LAUNCHER_MP4_OBJ)
 	$(CXX) $(LDFLAGS) -o $@ $^ $(LAUNCHER_LIBS) $(SDL_LIBS)
-
-$(CAMERA_OBJ): CPPFLAGS += $(SDL_CFLAGS)
+	rm -f $(LAUNCHER_OBJ) $(LAUNCHER_CAMERA_OBJ) $(LAUNCHER_SERVER_OBJ) $(LAUNCHER_MP4_OBJ) \
+		$(LAUNCHER_OBJ:.o=.d) $(LAUNCHER_CAMERA_OBJ:.o=.d) $(LAUNCHER_SERVER_OBJ:.o=.d) $(LAUNCHER_MP4_OBJ:.o=.d)
 
 $(LAUNCHER_CAMERA_OBJ): CPPFLAGS += -I$(ROCKCHIP_INCLUDE_DIR)
 $(LAUNCHER_CAMERA_OBJ): CPPFLAGS += $(SDL_CFLAGS)
-$(LAUNCHER_CAMERA_OBJ): CFLAGS += -Dmain=v4l2_preview_sdl_entry
 $(LAUNCHER_CAMERA_OBJ): $(CAMERA_PREVIEW_SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(LAUNCHER_SERVER_OBJ): CXXFLAGS += -Dmain=live555_server_entry
-$(LAUNCHER_SERVER_OBJ): $(TARGET_SRC)
+$(LAUNCHER_SERVER_OBJ): $(SERVER_SRC)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(LAUNCHER_MP4_OBJ): $(MP4_MUXER_SRC)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 %.o: %.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
@@ -92,12 +76,10 @@ $(LAUNCHER_SERVER_OBJ): $(TARGET_SRC)
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-run: $(TARGET)
-	./$(TARGET)
+run: $(LAUNCHER_TARGET)
+	./$(LAUNCHER_TARGET)
 
 clean:
 	rm -f $(ALL_TARGETS) $(ALL_OBJS) $(DEP_FILES)
 
 .PHONY: all run clean
-
--include $(DEP_FILES)
